@@ -46,9 +46,32 @@ if [ ! -f "package.json" ]; then
     # 从GitHub克隆项目文件
     print_status "从GitHub获取项目文件..."
     if git clone https://github.com/hanzch/zoom-bot.git temp_clone; then
-        # 移动文件到当前目录
-        mv temp_clone/* .
-        mv temp_clone/.* . 2>/dev/null || true
+        # 复制模板文件到根目录
+        if [ -d "temp_clone/templates" ]; then
+            cp -r temp_clone/templates/* .
+            print_status "复制模板文件完成"
+        fi
+        
+        # 复制脚本文件
+        if [ -d "temp_clone/scripts" ]; then
+            cp -r temp_clone/scripts .
+            print_status "复制脚本文件完成"
+        fi
+        
+        # 复制其他重要文件
+        if [ -f "temp_clone/setup_project.sh" ]; then
+            cp temp_clone/setup_project.sh .
+        fi
+        
+        if [ -f "temp_clone/deploy.sh" ]; then
+            cp temp_clone/deploy.sh .
+        fi
+        
+        # 复制README（如果不存在）
+        if [ ! -f "README.md" ] && [ -f "temp_clone/README.md" ]; then
+            cp temp_clone/README.md .
+        fi
+        
         rm -rf temp_clone
         print_status "项目文件获取成功"
         
