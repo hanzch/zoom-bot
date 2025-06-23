@@ -236,50 +236,88 @@ deploy_project() {
     # 进入项目目录
     cd "$PROJECT_DIR"
     
-    # 如果存在git仓库，从远程拉取
-    if [ -d ".git" ]; then
-        print_status "更新现有项目..."
-        git pull
+    # 检查是否已有项目文件
+    if [ -f "package.json" ]; then
+        print_status "检测到现有项目文件"
+        
+        # 如果存在git仓库，从远程拉取更新
+        if [ -d ".git" ]; then
+            print_status "更新现有项目..."
+            git pull
+        fi
     else
-        # 这里假设项目在某个git仓库中
-        print_status "初始化项目..."
-        
-        # 如果有远程仓库，克隆项目
-        # git clone https://github.com/hanzch/zoom-bot.git .
-        
-        # 如果没有远程仓库，使用本地模板
-        print_status "使用本地模板创建项目..."
+        print_status "初始化项目文件..."
         
         # 获取脚本所在目录
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         
-        # 复制模板文件
-        if [ -d "$SCRIPT_DIR/templates" ]; then
-            cp -r "$SCRIPT_DIR/templates"/* .
+        # 尝试从远程仓库克隆
+        if [ ! -d ".git" ]; then
+            print_status "尝试从远程仓库克隆..."
+            if git clone https://github.com/hanzch/zoom-bot.git . 2>/dev/null; then
+                print_status "从远程仓库克隆成功"
+            else
+                print_status "远程克隆失败，使用本地模板..."
+                
+                # 复制模板文件
+                if [ -d "$SCRIPT_DIR/templates" ]; then
+                    cp -r "$SCRIPT_DIR/templates"/* .
+                    print_status "复制模板文件完成"
+                else
+                    print_error "模板目录不存在: $SCRIPT_DIR/templates"
+                    exit 1
+                fi
+                
+                # 复制脚本文件
+                if [ -d "$SCRIPT_DIR/scripts" ]; then
+                    cp -r "$SCRIPT_DIR/scripts" .
+                    print_status "复制脚本文件完成"
+                fi
+                
+                # 复制setup脚本
+                if [ -f "$SCRIPT_DIR/setup_project.sh" ]; then
+                    cp "$SCRIPT_DIR/setup_project.sh" .
+                    print_status "复制setup脚本完成"
+                fi
+            fi
         else
-            print_error "模板目录不存在: $SCRIPT_DIR/templates"
-            exit 1
+            print_status "使用本地模板初始化..."
+            # 复制模板文件
+            if [ -d "$SCRIPT_DIR/templates" ]; then
+                cp -r "$SCRIPT_DIR/templates"/* .
+                print_status "复制模板文件完成"
+            else
+                print_error "模板目录不存在: $SCRIPT_DIR/templates"
+                exit 1
+            fi
         fi
         
-        # 复制脚本文件
-        if [ -d "$SCRIPT_DIR/scripts" ]; then
-            cp -r "$SCRIPT_DIR/scripts" .
-        fi
-        
-        # 复制setup脚本
-        if [ -f "$SCRIPT_DIR/setup_project.sh" ]; then
-            cp "$SCRIPT_DIR/setup_project.sh" .
-        fi
-        
-        # 创建.gitignore
-        cat > .gitignore << EOF
+        # 创建.gitignore（如果不存在）
+        if [ ! -f ".gitignore" ]; then
+            cat > .gitignore << EOF
 node_modules/
 .env
+.env.local
 logs/
 *.log
 .DS_Store
 *.pid
+.pm2/
+*.backup.*
 EOF
+            print_status "创建.gitignore文件"
+        fi
+    fi
+    
+    # 验证必要文件是否存在
+    if [ ! -f "package.json" ]; then
+        print_error "package.json文件仍然不存在，部署失败"
+        exit 1
+    fi
+    
+    if [ ! -f "server.js" ]; then
+        print_error "server.js文件不存在，部署失败"
+        exit 1
     fi
     
     # 安装依赖
