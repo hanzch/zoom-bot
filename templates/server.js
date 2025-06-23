@@ -111,9 +111,11 @@ function isTestJid(jid) {
 
 // 发送消息到Zoom
 async function sendMessage(toJid, message, robotJid) {
+    log(`Attempting to send message - toJid: ${toJid}, robotJid: ${robotJid}`, 'INFO');
+    
     // 检查是否为测试模式
     if (isTestJid(toJid) || isTestJid(robotJid)) {
-        log(`Test mode: Would send message to ${toJid}: ${message}`);
+        log(`Test mode detected: Would send message to ${toJid}: ${message}`);
         return {
             success: true,
             message: 'Test message sent successfully',
@@ -125,12 +127,17 @@ async function sendMessage(toJid, message, robotJid) {
 
     try {
         const token = await getAccessToken();
+        log(`Access token obtained, preparing API request`, 'INFO');
         
-        const response = await axios.post('https://api.zoom.us/v2/im/chat/messages', {
+        // 记录完整的请求数据
+        const requestData = {
             to_jid: toJid,
             message: message,
             robot_jid: robotJid
-        }, {
+        };
+        log(`API Request Data: ${JSON.stringify(requestData)}`, 'INFO');
+        
+        const response = await axios.post('https://api.zoom.us/v2/im/chat/messages', requestData, {
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
@@ -141,9 +148,20 @@ async function sendMessage(toJid, message, robotJid) {
         return response.data;
     } catch (error) {
         log(`Failed to send message: ${error.message}`, 'ERROR');
+        log(`Error code: ${error.code}`, 'ERROR');
+        log(`Request URL: https://api.zoom.us/v2/im/chat/messages`, 'ERROR');
+        
         if (error.response) {
-            log(`Error details: ${JSON.stringify(error.response.data)}`, 'ERROR');
+            log(`HTTP Status: ${error.response.status}`, 'ERROR');
+            log(`Response Headers: ${JSON.stringify(error.response.headers)}`, 'ERROR');
+            log(`Response Data: ${JSON.stringify(error.response.data)}`, 'ERROR');
         }
+        
+        if (error.config) {
+            log(`Request Headers: ${JSON.stringify(error.config.headers)}`, 'ERROR');
+            log(`Request Data: ${JSON.stringify(error.config.data)}`, 'ERROR');
+        }
+        
         throw error;
     }
 }
@@ -204,6 +222,10 @@ app.post('/webhook', async (req, res) => {
         if (event === 'bot_notification' && payload) {
             const { cmd, userName, userJid, robotJid } = payload;
             
+            // 详细记录接收到的JID信息
+            log(`Received JIDs - userJid: ${userJid}, robotJid: ${robotJid}`, 'INFO');
+            log(`Test JID check - userJid is test: ${isTestJid(userJid)}, robotJid is test: ${isTestJid(robotJid)}`, 'INFO');
+            
             if (!cmd || !userJid || !robotJid) {
                 log(`Missing required fields - cmd: ${cmd}, userJid: ${userJid}, robotJid: ${robotJid}`, 'WARNING');
                 return res.status(400).json({ error: 'Missing required fields' });
@@ -212,9 +234,11 @@ app.post('/webhook', async (req, res) => {
             try {
                 // 处理命令并生成回复
                 const replyMessage = processCommand(cmd, userName || 'User');
+                log(`Generated reply message: ${replyMessage}`, 'INFO');
                 
                 // 发送回复消息
-                await sendMessage(userJid, replyMessage, robotJid);
+                const sendResult = await sendMessage(userJid, replyMessage, robotJid);
+                log(`Send message result: ${JSON.stringify(sendResult)}`, 'INFO');
                 
                 // 返回响应给Zoom（兼容格式）
                 const response = {
@@ -227,6 +251,11 @@ app.post('/webhook', async (req, res) => {
                 return res.json(response);
             } catch (sendError) {
                 log(`Error sending message: ${sendError.message}`, 'ERROR');
+                if (sendError.response) {
+                    log(`API Error Response: ${JSON.stringify(sendError.response.data)}`, 'ERROR');
+                    log(`API Error Status: ${sendError.response.status}`, 'ERROR');
+                    log(`API Error Headers: ${JSON.stringify(sendError.response.headers)}`, 'ERROR');
+                }
                 // 仍然返回成功状态给Zoom，避免重试
                 return res.json({ status: 'received', error: 'Failed to send reply' });
             }
