@@ -245,7 +245,7 @@ deploy_project() {
         print_status "初始化项目..."
         
         # 如果有远程仓库，克隆项目
-        # git clone https://github.com/hanzch/zoom_boot.git .
+        # git clone https://github.com/hanzch/zoom-bot.git .
         
         # 如果没有远程仓库，使用本地模板
         print_status "使用本地模板创建项目..."
@@ -539,7 +539,7 @@ show_help() {
     echo ""
     echo "示例:"
     echo "  $0             # 交互式部署"
-    echo "  curl -sSL https://raw.githubusercontent.com/hanzch/zoom_boot/main/deploy.sh | bash"
+    echo "  curl -sSL https://raw.githubusercontent.com/hanzch/zoom-bot/main/deploy.sh | bash"
 }
 
 # 处理参数

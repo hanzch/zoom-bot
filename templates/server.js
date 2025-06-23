@@ -1,10 +1,18 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// 创建日志目录
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+}
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -13,11 +21,29 @@ app.use(bodyParser.urlencoded({ extended: true }));
 let accessToken = null;
 let tokenExpiryTime = null;
 
-// 日志函数
+// 增强的日志函数
 const log = (message, level = 'INFO') => {
     const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] [${level}] ${message}`);
+    const logMessage = `[${timestamp}] [${level}] ${message}`;
+    
+    // 输出到控制台
+    console.log(logMessage);
+    
+    // 写入日志文件
+    try {
+        const logFile = path.join(logsDir, 'run.log');
+        fs.appendFileSync(logFile, logMessage + '\n');
+    } catch (error) {
+        console.error('Failed to write log:', error.message);
+    }
 };
+
+// 进程启动日志
+log('='.repeat(50));
+log('Zoom Chat Bot Starting...');
+log(`Node.js version: ${process.version}`);
+log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+log(`Port: ${PORT}`);
 
 // 获取访问令牌
 async function getAccessToken() {
@@ -26,25 +52,49 @@ async function getAccessToken() {
         return accessToken;
     }
 
+    // 检查必要的环境变量
+    if (!process.env.ZOOM_CLIENT_ID || !process.env.ZOOM_CLIENT_SECRET) {
+        const error = new Error('Missing required Zoom credentials (ZOOM_CLIENT_ID or ZOOM_CLIENT_SECRET)');
+        log(error.message, 'ERROR');
+        throw error;
+    }
+
     try {
+        const authString = Buffer.from(`${process.env.ZOOM_CLIENT_ID}:${process.env.ZOOM_CLIENT_SECRET}`).toString('base64');
+        
+        const requestData = {
+            grant_type: 'client_credentials'
+        };
+        
+        // 如果有Account ID，使用Server-to-Server OAuth
+        if (process.env.ZOOM_ACCOUNT_ID) {
+            requestData.account_id = process.env.ZOOM_ACCOUNT_ID;
+        }
+
+        log('Requesting access token...');
         const response = await axios.post('https://zoom.us/oauth/token', null, {
-            params: {
-                grant_type: 'client_credentials',
-                account_id: process.env.ZOOM_ACCOUNT_ID
-            },
+            params: requestData,
             headers: {
-                'Authorization': `Basic ${Buffer.from(`${process.env.ZOOM_CLIENT_ID}:${process.env.ZOOM_CLIENT_SECRET}`).toString('base64')}`
+                'Authorization': `Basic ${authString}`,
+                'Content-Type': 'application/x-www-form-urlencoded'
             }
         });
+
+        if (!response.data.access_token) {
+            throw new Error('No access token in response');
+        }
 
         accessToken = response.data.access_token;
         // 设置过期时间为获取时间 + 有效期（减去5分钟缓冲）
         tokenExpiryTime = Date.now() + (response.data.expires_in - 300) * 1000;
         
-        log('访问令牌获取成功');
+        log('Access token obtained successfully');
         return accessToken;
     } catch (error) {
-        log(`获取访问令牌失败: ${error.message}`, 'ERROR');
+        const errorMsg = error.response ? 
+            `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}` : 
+            `Network Error: ${error.message}`;
+        log(`Failed to get access token: ${errorMsg}`, 'ERROR');
         throw error;
     }
 }
@@ -110,23 +160,36 @@ function processCommand(cmd, userName) {
 // Webhook端点 - 接收Zoom消息
 app.post('/webhook', async (req, res) => {
     try {
-        log(`收到Webhook请求: ${JSON.stringify(req.body)}`);
+        log(`Received webhook request from ${req.ip}`);
         
-        // 验证请求
-        const verificationToken = req.headers['authorization'];
-        if (verificationToken !== process.env.ZOOM_VERIFICATION_TOKEN) {
-            log('验证令牌不匹配', 'WARNING');
-            return res.status(401).json({ error: '未授权访问' });
+        // 更灵活的验证逻辑
+        const verificationToken = req.headers['authorization'] || req.headers['Authorization'];
+        const expectedToken = process.env.ZOOM_VERIFICATION_TOKEN;
+        
+        if (expectedToken && verificationToken !== expectedToken) {
+            log(`Verification token mismatch. Expected: ${expectedToken ? '[SET]' : '[NOT SET]'}, Received: ${verificationToken ? '[PROVIDED]' : '[NOT PROVIDED]'}`, 'WARNING');
+            return res.status(401).json({ error: 'Unauthorized access' });
+        }
+
+        if (!req.body || typeof req.body !== 'object') {
+            log('Invalid request body', 'WARNING');
+            return res.status(400).json({ error: 'Invalid request body' });
         }
 
         const { event, payload } = req.body;
+        log(`Event type: ${event}, Payload: ${JSON.stringify(payload)}`);
         
         if (event === 'bot_notification' && payload) {
             const { cmd, userName, userJid, robotJid } = payload;
             
-            if (cmd && userJid && robotJid) {
+            if (!cmd || !userJid || !robotJid) {
+                log(`Missing required fields - cmd: ${cmd}, userJid: ${userJid}, robotJid: ${robotJid}`, 'WARNING');
+                return res.status(400).json({ error: 'Missing required fields' });
+            }
+            
+            try {
                 // 处理命令并生成回复
-                const replyMessage = processCommand(cmd, userName || '用户');
+                const replyMessage = processCommand(cmd, userName || 'User');
                 
                 // 发送回复消息
                 await sendMessage(userJid, replyMessage, robotJid);
@@ -138,20 +201,25 @@ app.post('/webhook', async (req, res) => {
                     robot_jid: robotJid
                 };
                 
-                log(`处理命令成功: ${cmd} -> ${userName}`);
+                log(`Command processed successfully: ${cmd} -> ${userName || 'User'}`);
                 return res.json(response);
+            } catch (sendError) {
+                log(`Error sending message: ${sendError.message}`, 'ERROR');
+                // 仍然返回成功状态给Zoom，避免重试
+                return res.json({ status: 'received', error: 'Failed to send reply' });
             }
         }
         
-        // 其他事件类型的处理
-        log('收到非机器人通知事件或格式不正确');
-        res.json({ status: 'ok', message: '事件已接收' });
+        // 处理其他事件类型
+        log(`Received event: ${event}`);
+        res.json({ status: 'ok', message: 'Event received' });
         
     } catch (error) {
-        log(`Webhook处理错误: ${error.message}`, 'ERROR');
+        log(`Webhook processing error: ${error.message}`, 'ERROR');
+        log(`Stack trace: ${error.stack}`, 'ERROR');
         res.status(500).json({ 
-            error: '服务器内部错误',
-            message: error.message 
+            error: 'Internal server error',
+            message: process.env.NODE_ENV === 'development' ? error.message : 'Processing failed'
         });
     }
 });
@@ -424,22 +492,85 @@ app.get('/', (req, res) => {
     `);
 });
 
+// 环境变量检查
+function checkEnvironment() {
+    const requiredVars = ['ZOOM_CLIENT_ID', 'ZOOM_CLIENT_SECRET', 'ZOOM_VERIFICATION_TOKEN'];
+    const missingVars = requiredVars.filter(varName => !process.env[varName]);
+    
+    if (missingVars.length > 0) {
+        log(`Missing required environment variables: ${missingVars.join(', ')}`, 'ERROR');
+        log('Please check your .env file configuration', 'ERROR');
+        return false;
+    }
+    
+    log('Environment variables check passed');
+    return true;
+}
+
 // 启动服务器
-app.listen(PORT, () => {
-    log(`🚀 Zoom聊天机器人启动成功！`);
-    log(`📡 服务器运行在端口: ${PORT}`);
-    log(`🌐 Webhook地址: http://localhost:${PORT}/webhook`);
-    log(`🔧 测试控制台: http://localhost:${PORT}/test`);
-    log(`💚 健康检查: http://localhost:${PORT}/health`);
+const server = app.listen(PORT, (error) => {
+    if (error) {
+        log(`Failed to start server: ${error.message}`, 'ERROR');
+        process.exit(1);
+    }
+    
+    log(`🚀 Zoom Chat Bot started successfully!`);
+    log(`📡 Server running on port: ${PORT}`);
+    log(`🌐 Webhook URL: http://localhost:${PORT}/webhook`);
+    log(`🔧 Test Console: http://localhost:${PORT}/test`);
+    log(`💚 Health Check: http://localhost:${PORT}/health`);
+    
+    // 检查环境变量
+    if (!checkEnvironment()) {
+        log('Server started but configuration is incomplete', 'WARNING');
+        log('The bot may not function properly without proper Zoom credentials', 'WARNING');
+    }
+    
+    // 如果配置了域名，显示公网地址
+    if (process.env.DOMAIN_NAME && process.env.DOMAIN_NAME !== 'your-domain.com') {
+        log(`🌍 Public Webhook URL: https://${process.env.DOMAIN_NAME}/webhook`);
+        log(`🌍 Public OAuth Callback: https://${process.env.DOMAIN_NAME}/oauth/callback`);
+    }
+    
+    log('='.repeat(50));
+});
+
+// 处理服务器错误
+server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+        log(`Port ${PORT} is already in use. Please use a different port.`, 'ERROR');
+        log(`You can set PORT environment variable: PORT=3002 npm start`, 'ERROR');
+    } else {
+        log(`Server error: ${error.message}`, 'ERROR');
+    }
+    process.exit(1);
+});
+
+// 未捕获的异常处理
+process.on('uncaughtException', (error) => {
+    log(`Uncaught Exception: ${error.message}`, 'ERROR');
+    log(`Stack: ${error.stack}`, 'ERROR');
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    log(`Unhandled Rejection at: ${promise}, reason: ${reason}`, 'ERROR');
+    process.exit(1);
 });
 
 // 优雅关闭
 process.on('SIGTERM', () => {
-    log('收到SIGTERM信号，正在关闭服务器...');
-    process.exit(0);
+    log('Received SIGTERM signal, shutting down server...');
+    server.close(() => {
+        log('Server closed successfully');
+        process.exit(0);
+    });
 });
 
 process.on('SIGINT', () => {
-    log('收到SIGINT信号，正在关闭服务器...');
-    process.exit(0);
+    log('Received SIGINT signal, shutting down server...');
+    server.close(() => {
+        log('Server closed successfully');
+        process.exit(0);
+    });
 });
