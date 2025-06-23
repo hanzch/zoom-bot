@@ -208,6 +208,19 @@ function processCommand(cmd, userName) {
     }
 }
 
+// Webhook验证端点 - 处理Zoom的GET验证请求
+app.get('/webhook', (req, res) => {
+    const { challenge } = req.query;
+    log(`Webhook verification request - challenge: ${challenge}`, 'INFO');
+    
+    if (challenge) {
+        // 返回challenge以验证webhook
+        res.json({ challenge });
+    } else {
+        res.status(400).json({ error: 'Missing challenge parameter' });
+    }
+});
+
 // Webhook端点 - 接收Zoom消息
 app.post('/webhook', async (req, res) => {
     try {
