@@ -17,9 +17,11 @@ if (!fs.existsSync(logsDir)) {
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// 全局变量存储访问令牌
+// 全局变量存储访问令牌和机器人信息
 let accessToken = null;
 let tokenExpiryTime = null;
+let botAccountId = null;
+let botRobotJid = null;
 
 // 增强的日志函数
 const log = (message, level = 'INFO') => {
@@ -129,11 +131,20 @@ async function sendMessage(toJid, message, robotJid) {
         const token = await getAccessToken();
         log(`Access token obtained, preparing API request`, 'INFO');
         
-        // 记录完整的请求数据
+        // 使用保存的机器人信息（如果可用）
+        const finalAccountId = botAccountId || process.env.ZOOM_ACCOUNT_ID;
+        const finalRobotJid = botRobotJid || robotJid;
+        
+        // 记录完整的请求数据 - 使用新的API格式
         const requestData = {
+            robot_jid: finalRobotJid,
             to_jid: toJid,
-            message: message,
-            robot_jid: robotJid
+            account_id: finalAccountId,
+            content: {
+                head: {
+                    text: message
+                }
+            }
         };
         log(`API Request Data: ${JSON.stringify(requestData)}`, 'INFO');
         
@@ -219,11 +230,34 @@ app.post('/webhook', async (req, res) => {
         const { event, payload } = req.body;
         log(`Event type: ${event}, Payload: ${JSON.stringify(payload)}`);
         
+        // 处理机器人安装事件
+        if (event === 'bot_installed' && payload) {
+            const { accountId, robotJid, userId, userJid, userName } = payload;
+            log(`Bot installed - accountId: ${accountId}, robotJid: ${robotJid}`, 'INFO');
+            
+            // 保存机器人信息
+            botAccountId = accountId;
+            botRobotJid = robotJid;
+            
+            log(`Bot installation completed successfully`, 'INFO');
+            return res.json({ status: 'ok', message: 'Bot installed successfully' });
+        }
+        
         if (event === 'bot_notification' && payload) {
-            const { cmd, userName, userJid, robotJid } = payload;
+            const { cmd, userName, userJid, robotJid, accountId } = payload;
+            
+            // 如果payload中包含accountId，更新保存的信息
+            if (accountId && !botAccountId) {
+                botAccountId = accountId;
+                log(`Updated botAccountId from payload: ${accountId}`, 'INFO');
+            }
+            if (robotJid && !botRobotJid) {
+                botRobotJid = robotJid;
+                log(`Updated botRobotJid from payload: ${robotJid}`, 'INFO');
+            }
             
             // 详细记录接收到的JID信息
-            log(`Received JIDs - userJid: ${userJid}, robotJid: ${robotJid}`, 'INFO');
+            log(`Received JIDs - userJid: ${userJid}, robotJid: ${robotJid}, accountId: ${accountId}`, 'INFO');
             log(`Test JID check - userJid is test: ${isTestJid(userJid)}, robotJid is test: ${isTestJid(robotJid)}`, 'INFO');
             
             if (!cmd || !userJid || !robotJid) {
