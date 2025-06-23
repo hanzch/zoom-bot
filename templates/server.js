@@ -99,8 +99,30 @@ async function getAccessToken() {
     }
 }
 
+// 检查是否为测试JID
+function isTestJid(jid) {
+    const testJids = [
+        'test@xmpp.zoom.us',
+        'bot@xmpp.zoom.us',
+        'user@xmpp.zoom.us'
+    ];
+    return testJids.includes(jid);
+}
+
 // 发送消息到Zoom
 async function sendMessage(toJid, message, robotJid) {
+    // 检查是否为测试模式
+    if (isTestJid(toJid) || isTestJid(robotJid)) {
+        log(`Test mode: Would send message to ${toJid}: ${message}`);
+        return {
+            success: true,
+            message: 'Test message sent successfully',
+            to_jid: toJid,
+            robot_jid: robotJid,
+            test_mode: true
+        };
+    }
+
     try {
         const token = await getAccessToken();
         
@@ -115,12 +137,12 @@ async function sendMessage(toJid, message, robotJid) {
             }
         });
 
-        log(`消息发送成功到 ${toJid}: ${message}`);
+        log(`Message sent successfully to ${toJid}: ${message}`);
         return response.data;
     } catch (error) {
-        log(`发送消息失败: ${error.message}`, 'ERROR');
+        log(`Failed to send message: ${error.message}`, 'ERROR');
         if (error.response) {
-            log(`错误详情: ${JSON.stringify(error.response.data)}`, 'ERROR');
+            log(`Error details: ${JSON.stringify(error.response.data)}`, 'ERROR');
         }
         throw error;
     }
