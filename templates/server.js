@@ -221,6 +221,14 @@ app.get('/webhook', (req, res) => {
     }
 });
 
+// 调试端点 - 记录所有到达webhook的请求
+app.all('/webhook-debug', (req, res) => {
+    log(`DEBUG - Method: ${req.method}, Headers: ${JSON.stringify(req.headers)}`, 'INFO');
+    log(`DEBUG - Query: ${JSON.stringify(req.query)}`, 'INFO');
+    log(`DEBUG - Body: ${JSON.stringify(req.body)}`, 'INFO');
+    res.json({ status: 'debug', method: req.method, received: true });
+});
+
 // Webhook端点 - 接收Zoom消息
 app.post('/webhook', async (req, res) => {
     try {
