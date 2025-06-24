@@ -135,15 +135,21 @@ async function sendMessage(toJid, message, robotJid) {
         const finalAccountId = botAccountId || process.env.ZOOM_ACCOUNT_ID;
         const finalRobotJid = botRobotJid || robotJid;
         
-        // 记录完整的请求数据 - 使用新的API格式
+        // 记录完整的请求数据 - 使用正确的API格式
         const requestData = {
             robot_jid: finalRobotJid,
             to_jid: toJid,
             account_id: finalAccountId,
             content: {
                 head: {
-                    text: message
-                }
+                    text: "Zoom Bot"
+                },
+                body: [
+                    {
+                        type: "message",
+                        text: message
+                    }
+                ]
             }
         };
         log(`API Request Data: ${JSON.stringify(requestData)}`, 'INFO');
